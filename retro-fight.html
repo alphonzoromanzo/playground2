@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RetroFight Engine - NeoGeo Style</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* === ESTILOS BASE E EFEITO RETRO === */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Container com proporção 4:3 simulada */
+        #game-wrapper {
+            position: relative;
+            width: min(100vw, calc(100vh * 4 / 3));
+            aspect-ratio: 4 / 3;
+            border: 2px solid #333;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        /* Overlay de scanlines para aspeto retro */
+        #scanlines {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.12) 2px,
+                rgba(0, 0, 0, 0.12) 4px
+            );
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* Vinheta nas bordas */
+        #vignette {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: radial-gradient(
+                ellipse at center,
+                transparent 60%,
+                rgba(0,0,0,0.6) 100%
+            );
+            pointer-events: none;
+            z-index: 11;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-wrapper">
+        <canvas id="gameCanvas" width="640" height="480"></canvas>
+        <div id="scanlines"></div>
+        <div id="vignette"></div>
+    </div>
+
+    <script>
+    // ================================================================
+    // RETRO FIGHT ENGINE v1.0
+    // Motor de jogo de luta 2D estilo NeoGeo/Arcade
+    //
+    // Arquitetura:
+    //   - Game Loop de 60 FPS fixos com timestep acumulado
+    //   - FSM (Finite State Machine) por lutador
+    //   - Sistema de física com gravidade e wall bouncing
+    //   - Hitbox / Hurtbox distinction
+    //   - Ecrã de seleção com cursores independentes P1/P2
+    //   - HUD com barras de vida, timer e indicadores de round
+    //   - Screen Shake e White Flash em golpes pesados
+    //   - Scanlines CSS + vinheta para aspeto retro
+    //
+    // Comentários em Português de Portugal (PT-PT)
+    // Termos técnicos de Game Dev mantidos em Inglês
+    // ================================================================
+
+    'use strict';
+
+    // ================================================================
+    // CONSTANTES DO MOTOR
+    // ================================================================
+    const CANVAS_W   = 640;
+    const CANVAS_H   = 480;
+    const FPS        = 60;
+    const FRAME_MS   = 1000 / FPS;          // ~16.67 ms por frame
+    const GRAVITY    = 0.55;                // Aceleração gravítica por frame
+    const GROUND_Y   = 375;                 // Y do chão
+    const FRICTION   = 0.75;               // Fricção no solo
+    const AIR_FRIC   = 0.96;               // Fricção no ar
+    const ROUND_SECS = 99;                  // Duração do round em segundos
+    const SHAKE_DECAY = 0.82;              // Fator de decaimento do screen shake
+    const MAX_WINS   = 2;                   // Melhor de 3 rounds
+
+    // ================================================================
+    // ESTADOS DO LUTADOR (FSM)
+    // ================================================================
+    const S = {
+        IDLE:           'IDLE',
+        WALK_L:         'WALK_L',
+        WALK_R:         'WALK_R',
+        JUMP:           'JUMP',
+        CROUCH:         'CROUCH',
+        ATK_LIGHT:      'ATK_LIGHT',    // Soco leve
+        ATK_HEAVY:      'ATK_HEAVY',    // Chute pesado
+        ATK_SPECIAL:    'ATK_SPECIAL',  // Golpe especial
+        HIT:            'HIT',          // A receber dano
+        KO:             'KO'            // Eliminado
+    };
+
+    // ================================================================
+    // ESTADOS DO JOGO
+    // ================================================================
+    const GS = {
+        CHAR_SELECT: 'CHAR_SELECT',
+        COMBAT:      'COMBAT',
+        ROUND_END:   'ROUND_END',
+        GAME_OVER:   'GAME_OVER'
+    };
+
+    // ================================================================
+    // ROSTER DE PERSONAGENS
+    // Cada entrada define os dados base do lutador.
+    // Os campos visuais (color, shape) são usados pelos placeholders
+    // geométricos — substituir por Sprite Sheets no futuro.
+    // ================================================================
+    const FIGHTER_ROSTER = [
+        {
+            id: 0,
+            name: 'DRAGÃO',
+            health: 100,
+            attackPower: 12,
+            speed: 4.5,
+            jumpHeight: -14.5,
+            specialMoveName: 'Punho do Dragão',
+            color: '#E83535',
+            accent: '#FF9999',
+            w: 50, h: 80,
+            shape: 'warrior'
+        },
+        {
+            id: 1,
+            name: 'NINJA',
+            health: 82,
+            attackPower: 10,
+            speed: 6.2,
+            jumpHeight: -16.0,
+            specialMoveName: 'Sombra Dupla',
+            color: '#3355EE',
+            accent: '#99AAFF',
+            w: 42, h: 76,
+            shape: 'ninja'
+        },
+        {
+            id: 2,
+            name: 'BRUTAL',
+            health: 135,
+            attackPower: 17,
+            speed: 2.8,
+            jumpHeight: -11.0,
+            specialMoveName: 'Terraço Sísmico',
+            color: '#33AA44',
+            accent: '#88EE88',
+            w: 64, h: 86,
+            shape: 'wrestler'
+        },
+        {
+            id: 3,
+            name: 'SAMURAI',
+            health: 92,
+            attackPower: 14,
+            speed: 4.0,
+            jumpHeight: -13.5,
+            specialMoveName: 'Corte Celestial',
+            color: '#DDAA00',
+            accent: '#FFEE88',
+            w: 46, h: 82,
+            shape: 'samurai'
+        },
+        {
+            id: 4,
+            name: 'MONGE',
+            health: 108,
+            attackPower: 11,
+            speed: 4.8,
+            jumpHeight: -15.0,
+            specialMoveName: 'Palma do Trovão',
+            color: '#EE7700',
+            accent: '#FFCC88',
+            w: 48, h: 78,
+            shape: 'monk'
+        },
+        {
+            id: 5,
+            name: 'TITAN',
+            health: 118,
+            attackPower: 13,
+            speed: 3.6,
+            jumpHeight: -12.5,
+            specialMoveName: 'Canhão de Plasma',
+            color: '#9944EE',
+            accent: '#CC99FF',
+            w: 56, h: 82,
+            shape: 'robot'
+        }
+    ];
+
+    // ================================================================
+    // GESTOR DE INPUT
+    // Regista o estado atual e anterior das teclas para detetar
+    // "just pressed" (início da pressão) sem repetição de eventos.
+    // ================================================================
+    class InputManager {
+        constructor() {
+            this.cur  = {};   // Estado atual das teclas
+            this.prev = {};   // Estado no frame anterior
+
+            // Mapeamento de teclas para P1 (WASD + F/G/H)
+            this.p1Map = {
+                left:    'KeyA',
+                right:   'KeyD',
+                up:      'KeyW',
+                down:    'KeyS',
+                light:   'KeyF',
+                heavy:   'KeyG',
+                special: 'KeyH'
+            };
+
+            // Mapeamento de teclas para P2 (Setas + K/L/;)
+            this.p2Map = {
+                left:    'ArrowLeft',
+                right:   'ArrowRight',
+                up:      'ArrowUp',
+                down:    'ArrowDown',
+                light:   'KeyK',
+                heavy:   'KeyL',
+                special: 'Semicolon'  // Tecla Ç no layout PT
+            };
+
+            document.addEventListener('keydown', e => { this.cur[e.code] = true; e.preventDefault(); });
+            document.addEventListener('keyup',   e => { this.cur[e.code] = false; });
+        }
+
+        // Chamado uma vez por frame para preservar o estado anterior
+        tick() { this.prev = { ...this.cur }; }
+
+        isDown(code)   { return !!this.cur[code]; }
+        justDown(code) { return !!this.cur[code] && !this.prev[code]; }
+
+        // Retorna o estado de input de um jogador dado o seu mapa de teclas
+        _read(map) {
+            return {
+                left:    this.isDown(map.left),
+                right:   this.isDown(map.right),
+                up:      this.justDown(map.up),
+                down:    this.isDown(map.down),
+                light:   this.justDown(map.light),
+                heavy:   this.justDown(map.heavy),
+                special: this.justDown(map.special)
+            };
+        }
+
+        p1() { return this._read(this.p1Map); }
+        p2() { return this._read(this.p2Map); }
+    }
+
+    // ================================================================
+    // CLASSE FIGHTER
+    // Implementa a FSM, física, hitboxes/hurtboxes e renderização
+    // do placeholder geométrico.
+    // ================================================================
+    class Fighter {
+        constructor(data, side) {
+            this.data  = data;
+            this.side  = side;            // 'left' ou 'right'
+            this.x     = side === 'left' ? 90 : CANVAS_W - 90 - data.w;
+            this.y     = GROUND_Y - data.h;
+            this.vx    = 0;
+            this.vy    = 0;
+            this.onGround = true;
+            this.facingR  = side === 'left';  // true = voltado à direita
+
+            // Stats do round
+            this.hp    = data.health;
+            this.maxHp = data.health;
+
+            // FSM
+            this.state = S.IDLE;
+            this.timer = 0;   // Frames no estado atual
+
+            // Frame Data: startup / active / recovery / cancelFrame
+            // Startup   = frames antes da hitbox ficar ativa
+            // Active    = frames em que a hitbox está ativa
+            // Recovery  = frames após a hitbox desaparecer
+            // cancelFrame = frame a partir do qual se pode cancelar para SPECIAL
+            this.fd = {
+                [S.ATK_LIGHT]:   { startup:  3, active: 4, recovery:  8, cancelAt:  5 },
+                [S.ATK_HEAVY]:   { startup:  8, active: 6, recovery: 15, cancelAt: 10 },
+                [S.ATK_SPECIAL]: { startup:  5, active: 8, recovery: 20, cancelAt: 99 },
+                [S.HIT]:         { duration: 14 },
+                [S.KO]:          { duration: 240 }
+            };
+
+            // Flags de ataque
+            this.atkActive  = false;  // Hitbox ligada?
+            this.atkHit     = false;  // Já acertou neste swing?
+            this.canCancel  = false;  // Janela de combo cancel ativa?
+
+            // Efeito visual de flash ao receber golpe
+            this.flashTimer = 0;
+        }
+
+        // --- Transição de estado ---
+        setState(s) {
+            if (this.state === S.KO) return;
+            this.state     = s;
+            this.timer     = 0;
+            this.atkActive = false;
+            this.atkHit    = false;
+            this.canCancel = false;
+        }
+
+        // --- Processar input do jogador ---
+        handleInput(inp) {
+            const st = this.state;
+
+            // Em KO ou durante HIT, bloquear input
+            if (st === S.KO) return;
+            if (st === S.HIT && this.timer < this.fd[S.HIT].duration) return;
+
+            // Combo Cancel: durante janela de ataque, permitir especial
+            if (this.canCancel && inp.special) {
+                this.setState(S.ATK_SPECIAL);
+                this.vx = (this.facingR ? 1 : -1) * 3.5;
+                return;
+            }
+
+            // Ataques (disponíveis em IDLE, WALK, CROUCH e JUMP)
+            const neutral = [S.IDLE, S.WALK_L, S.WALK_R, S.CROUCH].includes(st);
+            const airborne = st === S.JUMP;
+
+            if (inp.special && (neutral || airborne)) { this.setState(S.ATK_SPECIAL); return; }
+            if (inp.heavy   && (neutral || airborne)) { this.setState(S.ATK_HEAVY);   return; }
+            if (inp.light   && (neutral || airborne)) { this.setState(S.ATK_LIGHT);   return; }
+
+            // Movimento no solo
+            if (neutral) {
+                if (inp.up) {
+                    this.vy = this.data.jumpHeight;
+                    this.onGround = false;
+                    this.setState(S.JUMP);
+                    return;
+                }
+                if (inp.down) { this.setState(S.CROUCH); return; }
+                if (inp.left)  { this.vx = -this.data.speed; this.setState(S.WALK_L); this.facingR = false; return; }
+                if (inp.right) { this.vx =  this.data.speed; this.setState(S.WALK_R); this.facingR = true;  return; }
+                this.setState(S.IDLE);
+            }
+
+            // Controlo direcional no ar
+            if (airborne) {
+                if (inp.left)  this.vx = Math.max(this.vx - 0.6, -this.data.speed);
+                if (inp.right) this.vx = Math.min(this.vx + 0.6,  this.data.speed);
+            }
+
+            // Agachamento: soltar tecla retorna ao IDLE
+            if (st === S.CROUCH && !inp.down) this.setState(S.IDLE);
+        }
+
+        // --- Atualização da FSM por frame ---
+        updateFSM() {
+            this.timer++;
+            const fd = this.fd;
+
+            switch (this.state) {
+                case S.ATK_LIGHT:
+                case S.ATK_HEAVY:
+                case S.ATK_SPECIAL: {
+                    const d = fd[this.state];
+                    this.atkActive = this.timer > d.startup && this.timer <= d.startup + d.active;
+                    this.canCancel = this.state !== S.ATK_SPECIAL &&
+                                     this.timer >= d.cancelAt &&
+                                     this.timer <  d.startup + d.active + d.recovery;
+                    if (this.timer >= d.startup + d.active + d.recovery) {
+                        this.setState(S.IDLE);
+                        if (this.state === S.ATK_SPECIAL) this.vx = 0;
+                    }
+                    break;
+                }
+                case S.HIT:
+                    if (this.timer >= fd[S.HIT].duration) this.setState(S.IDLE);
+                    break;
+                case S.KO:
+                    // Permanece em KO — sem transição
+                    break;
+            }
+        }
+
+        // --- Sistema de Física ---
+        applyPhysics() {
+            // Gravidade (só no ar)
+            if (!this.onGround) this.vy += GRAVITY;
+
+            // Integração de velocidade
+            this.x += this.vx;
+            this.y += this.vy;
+
+            // Fricção
+            if (this.onGround) {
+                this.vx *= FRICTION;
+                if (Math.abs(this.vx) < 0.15) this.vx = 0;
+            } else {
+                this.vx *= AIR_FRIC;
+            }
+
+            // Colisão com o chão
+            if (this.y + this.data.h >= GROUND_Y) {
+                this.y = GROUND_Y - this.data.h;
+                this.vy = 0;
+                this.onGround = true;
+                if (this.state === S.JUMP) this.setState(S.IDLE);
+            }
+
+            // Wall Bouncing — manter o lutador dentro do ecrã
+            const margin = 8;
+            if (this.x < margin) {
+                this.x  = margin;
+                this.vx = Math.abs(this.vx) * 0.35;
+            }
+            if (this.x + this.data.w > CANVAS_W - margin) {
+                this.x  = CANVAS_W - margin - this.data.w;
+                this.vx = -Math.abs(this.vx) * 0.35;
+            }
+
+            // Timer de flash
+            if (this.flashTimer > 0) this.flashTimer--;
+        }
+
+        // --- Hurtbox: área do corpo vulnerável ao dano ---
+        getHurtbox() {
+            const crouching = this.state === S.CROUCH;
+            return {
+                x: this.x + 5,
+                y: crouching ? this.y + this.data.h * 0.38 : this.y + 2,
+                w: this.data.w - 10,
+                h: crouching ? this.data.h * 0.62 : this.data.h - 4
+            };
+        }
+
+        // --- Hitbox: área do golpe que inflige dano ---
+        getHitbox() {
+            if (!this.atkActive) return null;
+
+            let hw = 50, hh = 38, hdy = 18; // largura, altura, offset Y
+
+            if (this.state === S.ATK_LIGHT)   { hw = 44; hh = 32; hdy = 14; }
+            if (this.state === S.ATK_HEAVY)   { hw = 56; hh = 46; hdy = 26; }
+            if (this.state === S.ATK_SPECIAL) { hw = 72; hh = 52; hdy = 10; }
+
+            const hx = this.facingR
+                ? this.x + this.data.w - 6
+                : this.x - hw + 6;
+
+            return { x: hx, y: this.y + hdy, w: hw, h: hh };
+        }
+
+        // --- Receber dano ---
+        takeDamage(amount, dir) {
+            if (this.state === S.KO) return;
+            this.hp = Math.max(0, this.hp - amount);
+            this.flashTimer = 10;
+            this.vx = dir * 5.5;
+            this.vy = -3.5;
+            if (this.hp <= 0) {
+                this.setState(S.KO);
+                this.vy = -8;
+            } else {
+                this.setState(S.HIT);
+            }
+        }
+
+        // --- Virar automaticamente para o oponente (em IDLE) ---
+        faceOpponent(ox) {
+            if (this.state === S.IDLE || this.state === S.CROUCH) {
+                this.facingR = ox > this.x;
+            }
+        }
+
+        // --- Atualização principal por frame ---
+        update(inp, opp) {
+            this.handleInput(inp);
+            this.updateFSM();
+            this.applyPhysics();
+            this.faceOpponent(opp.x);
+        }
+
+        // ============================================================
+        // RENDERIZAÇÃO — Placeholder Geométrico
+        // Cada personagem usa formas geométricas distintas.
+        // Para integrar Sprite Sheets: substituir _renderShape()
+        // ============================================================
+        render(ctx) {
+            const flash = this.flashTimer > 0 && this.flashTimer % 2 === 0;
+            const fc = flash ? '#FFFFFF' : this.data.color;
+            const fa = flash ? '#FFFFFF' : this.data.accent;
+
+            ctx.save();
+
+            // Espelhar horizontalmente quando voltado para a esquerda
+            if (!this.facingR) {
+                ctx.translate(this.x + this.data.w / 2, 0);
+                ctx.scale(-1, 1);
+                ctx.translate(-(this.x + this.data.w / 2), 0);
+            }
+
+            // Ajuste de agachamento (comprime verticalmente)
+            const crouching = this.state === S.CROUCH;
+            const drawH     = crouching ? this.data.h * 0.62 : this.data.h;
+            const drawY     = crouching ? this.y + this.data.h * 0.38 : this.y;
+
+            this._drawShape(ctx, this.x, drawY, this.data.w, drawH, fc, fa);
+
+            // Braço de ataque visual (aparece durante frames ativos)
+            if (this.atkActive) {
+                ctx.fillStyle = '#FFFF00';
+                ctx.shadowColor = '#FFFF00';
+                ctx.shadowBlur = 6;
+                const armX = this.x + this.data.w;
+                const armY = drawY + drawH * 0.28;
+                ctx.fillRect(armX, armY, 22, 10);
+                ctx.shadowBlur = 0;
+            }
+
+            ctx.restore();
+
+            // Debug das hitboxes (descomentar para desenvolvimento)
+            // this._debugBoxes(ctx);
+        }
+
+        // --- Selector de formas geométricas por personagem ---
+        _drawShape(ctx, x, y, w, h, c, a) {
+            switch (this.data.shape) {
+                case 'warrior':  this._warrior(ctx, x, y, w, h, c, a); break;
+                case 'ninja':    this._ninja(ctx, x, y, w, h, c, a);   break;
+                case 'wrestler': this._wrestler(ctx, x, y, w, h, c, a);break;
+                case 'samurai':  this._samurai(ctx, x, y, w, h, c, a); break;
+                case 'monk':     this._monk(ctx, x, y, w, h, c, a);    break;
+                case 'robot':    this._robot(ctx, x, y, w, h, c, a);   break;
+            }
+        }
+
+        _warrior(ctx, x, y, w, h, c, a) {
+            // Tronco
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 6, y + h * 0.28, w - 12, h * 0.72);
+            // Cabeça
+            ctx.fillStyle = a;
+            ctx.fillRect(x + 9, y + h * 0.02, w - 18, h * 0.25);
+            // Elmo
+            ctx.fillStyle = '#888';
+            ctx.fillRect(x + 7, y, w - 14, h * 0.1);
+            // Ombro direito (fist side)
+            ctx.fillStyle = c;
+            ctx.fillRect(x + w - 10, y + h * 0.3, 14, h * 0.22);
+            // Cinturão
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x + 6, y + h * 0.62, w - 12, h * 0.06);
+        }
+
+        _ninja(ctx, x, y, w, h, c, a) {
+            // Corpo esguio
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 9, y + h * 0.24, w - 18, h * 0.76);
+            // Cabeça com capuz
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 11, y, w - 22, h * 0.23);
+            // Faixa ocular
+            ctx.fillStyle = a;
+            ctx.fillRect(x + 13, y + h * 0.06, w - 26, h * 0.09);
+            // Lenço que sai pelo lado
+            ctx.fillStyle = a;
+            ctx.beginPath();
+            ctx.moveTo(x + w - 9, y + h * 0.04);
+            ctx.lineTo(x + w + 12, y + h * 0.16);
+            ctx.lineTo(x + w + 7, y + h * 0.28);
+            ctx.lineTo(x + w - 9, y + h * 0.22);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        _wrestler(ctx, x, y, w, h, c, a) {
+            // Tronco largo
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 2, y + h * 0.24, w - 4, h * 0.76);
+            // Cabeça grande
+            ctx.fillStyle = a;
+            ctx.fillRect(x + 6, y, w - 12, h * 0.26);
+            // Braços extras largos
+            ctx.fillStyle = c;
+            ctx.fillRect(x - 8, y + h * 0.28, 14, h * 0.36);
+            ctx.fillRect(x + w - 6, y + h * 0.28, 14, h * 0.36);
+            // Cinto de campeão
+            ctx.fillStyle = '#FFD700';
+            ctx.fillRect(x + 2, y + h * 0.58, w - 4, h * 0.09);
+            ctx.fillStyle = '#AA8800';
+            ctx.fillRect(x + w / 2 - 8, y + h * 0.56, 16, h * 0.14);
+        }
+
+        _samurai(ctx, x, y, w, h, c, a) {
+            // Corpo
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 7, y + h * 0.27, w - 14, h * 0.73);
+            // Cabeça
+            ctx.fillStyle = a;
+            ctx.fillRect(x + 10, y + h * 0.05, w - 20, h * 0.22);
+            // Kabuto (capacete)
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 7, y, w - 14, h * 0.09);
+            // Corno central
+            ctx.fillRect(x + w / 2 - 2, y - h * 0.06, 4, h * 0.09);
+            // Katana na costa
+            ctx.fillStyle = '#CCCCDD';
+            ctx.fillRect(x + w - 5, y + h * 0.12, 3, h * 0.58);
+            ctx.fillStyle = '#AA8800';
+            ctx.fillRect(x + w - 8, y + h * 0.12, 9, h * 0.06);
+        }
+
+        _monk(ctx, x, y, w, h, c, a) {
+            // Robe alargado em baixo
+            ctx.fillStyle = c;
+            ctx.beginPath();
+            ctx.moveTo(x + 6, y + h * 0.28);
+            ctx.lineTo(x - 6, y + h);
+            ctx.lineTo(x + w + 6, y + h);
+            ctx.lineTo(x + w - 6, y + h * 0.28);
+            ctx.closePath();
+            ctx.fill();
+            // Tronco
+            ctx.fillRect(x + 8, y + h * 0.24, w - 16, h * 0.28);
+            // Cabeça redonda (arco)
+            ctx.fillStyle = a;
+            ctx.beginPath();
+            ctx.arc(x + w / 2, y + h * 0.12, h * 0.13, 0, Math.PI * 2);
+            ctx.fill();
+            // Faixa
+            ctx.fillStyle = '#FF6600';
+            ctx.fillRect(x + 6, y + h * 0.48, w - 12, h * 0.06);
+        }
+
+        _robot(ctx, x, y, w, h, c, a) {
+            // Chassis (tronco quadrado)
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 4, y + h * 0.28, w - 8, h * 0.57);
+            // Cabeça quadrada
+            ctx.fillRect(x + 8, y + h * 0.03, w - 16, h * 0.24);
+            // Visor
+            ctx.fillStyle = a;
+            ctx.fillRect(x + 12, y + h * 0.08, w - 24, h * 0.1);
+            // Antena
+            ctx.fillStyle = '#CCCCCC';
+            ctx.fillRect(x + w / 2 - 1, y, 2, h * 0.06);
+            ctx.beginPath();
+            ctx.arc(x + w / 2, y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            // Detalhes mecânicos
+            ctx.fillStyle = a;
+            ctx.fillRect(x + 7, y + h * 0.4, 7, 7);
+            ctx.fillRect(x + w - 14, y + h * 0.4, 7, 7);
+            // Pernas
+            ctx.fillStyle = c;
+            ctx.fillRect(x + 8, y + h * 0.82, w / 2 - 10, h * 0.18);
+            ctx.fillRect(x + w / 2 + 2, y + h * 0.82, w / 2 - 10, h * 0.18);
+        }
+
+        // --- Debug: visualizar hitboxes e hurtboxes ---
+        _debugBoxes(ctx) {
+            const hb = this.getHurtbox();
+            ctx.strokeStyle = 'rgba(0,255,0,0.8)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(hb.x, hb.y, hb.w, hb.h);
+            const atk = this.getHitbox();
+            if (atk) {
+                ctx.strokeStyle = 'rgba(255,50,50,0.9)';
+                ctx.strokeRect(atk.x, atk.y, atk.w, atk.h);
+            }
+        }
+    }
+
+    // ================================================================
+    // GESTOR DO JOGO
+    // Orquestra os estados do jogo, o combat loop e a renderização.
+    // ================================================================
+    class Game {
+        constructor(canvas) {
+            this.cv  = canvas;
+            this.ctx = canvas.getContext('2d');
+            this.inp = new InputManager();
+
+            // Estado atual do jogo
+            this.gs = GS.CHAR_SELECT;
+
+            // Seleção de personagens
+            this.p1Sel  = 0;
+            this.p2Sel  = 5;
+            this.p1OK   = false;
+            this.p2OK   = false;
+            this.selCD1 = 0;   // Cooldown de cursor P1
+            this.selCD2 = 0;   // Cooldown de cursor P2
+
+            // Instâncias ativas dos lutadores
+            this.f1 = null;
+            this.f2 = null;
+
+            // Pontuação
+            this.p1Wins = 0;
+            this.p2Wins = 0;
+
+            // Timer do round (em frames)
+            this.roundFrames = ROUND_SECS * FPS;
+            this.timerDisplay = ROUND_SECS;
+
+            // Efeitos visuais
+            this.shake     = { x: 0, y: 0, mag: 0 };
+            this.wFlash    = 0;   // White flash intensity (frames)
+
+            // Fim de round
+            this.roundEndTimer = 0;
+            this.roundMsg      = '';
+
+            // Game loop timestep
+            this.lastTS      = 0;
+            this.accumulator = 0;
+        }
+
+        // --- Iniciar novo round ---
+        startRound() {
+            this.f1 = new Fighter(FIGHTER_ROSTER[this.p1Sel], 'left');
+            this.f2 = new Fighter(FIGHTER_ROSTER[this.p2Sel], 'right');
+            this.roundFrames  = ROUND_SECS * FPS;
+            this.timerDisplay = ROUND_SECS;
+            this.wFlash       = 0;
+            this.shake        = { x: 0, y: 0, mag: 0 };
+            this.gs = GS.COMBAT;
+        }
+
+        // ============================================================
+        // DETEÇÃO DE COLISÕES DE GOLPES
+        // Usa AABB (Axis-Aligned Bounding Box) para hitbox vs hurtbox
+        // ============================================================
+        checkHit(atk, def) {
+            if (!atk.atkActive || atk.atkHit) return;
+            if (def.state === S.KO) return;
+
+            const hb  = atk.getHitbox();
+            const hrt = def.getHurtbox();
+            if (!hb) return;
+
+            // Teste de sobreposição AABB
+            const overlap =
+                hb.x < hrt.x + hrt.w &&
+                hb.x + hb.w > hrt.x  &&
+                hb.y < hrt.y + hrt.h &&
+                hb.y + hb.h > hrt.y;
+
+            if (!overlap) return;
+
+            // Registar hit para evitar multi-hit no mesmo swing
+            atk.atkHit = true;
+
+            // Calcular dano por tipo de ataque
+            let dmg = atk.data.attackPower;
+            if (atk.state === S.ATK_HEAVY)   dmg = Math.round(dmg * 1.65);
+            if (atk.state === S.ATK_SPECIAL) dmg = Math.round(dmg * 2.3);
+
+            // Direção do knockback (afasta do atacante)
+            const dir = atk.x < def.x ? 1 : -1;
+            def.takeDamage(dmg, dir);
+
+            // Efeitos visuais de impacto
+            const heavy = atk.state !== S.ATK_LIGHT;
+            this.wFlash = heavy ? 10 : 5;
+            if (heavy) this.triggerShake(atk.state === S.ATK_SPECIAL ? 9 : 5);
+        }
+
+        // --- Empurrão de corpo (evitar sobreposição entre fighters) ---
+        applyBodyPush() {
+            const f1r = this.f1.x + this.f1.data.w;
+            if (this.f1.x < this.f2.x && f1r > this.f2.x) {
+                const ov = f1r - this.f2.x;
+                this.f1.x -= ov / 2;
+                this.f2.x += ov / 2;
+            }
+        }
+
+        // --- Screen Shake ---
+        triggerShake(mag) { this.shake.mag = mag; }
+
+        updateShake() {
+            if (this.shake.mag > 0.5) {
+                this.shake.x   = (Math.random() - 0.5) * this.shake.mag;
+                this.shake.y   = (Math.random() - 0.5) * this.shake.mag;
+                this.shake.mag *= SHAKE_DECAY;
+            } else {
+                this.shake.x = this.shake.y = this.shake.mag = 0;
+            }
+        }
+
+        // --- Verificar condição de fim de round ---
+        checkRoundEnd() {
+            const f1KO = this.f1.state === S.KO && this.f1.timer > 65;
+            const f2KO = this.f2.state === S.KO && this.f2.timer > 65;
+            const timeout = this.roundFrames <= 0;
+
+            if (!f1KO && !f2KO && !timeout) return;
+
+            if (f1KO && f2KO) {
+                this.roundMsg = 'EMPATE!';
+            } else if (f2KO) {
+                this.p1Wins++;
+                this.roundMsg = FIGHTER_ROSTER[this.p1Sel].name + ' VENCE!';
+            } else if (f1KO) {
+                this.p2Wins++;
+                this.roundMsg = FIGHTER_ROSTER[this.p2Sel].name + ' VENCE!';
+            } else if (timeout) {
+                if (this.f1.hp > this.f2.hp)      { this.p1Wins++; this.roundMsg = FIGHTER_ROSTER[this.p1Sel].name + ' VENCE!'; }
+                else if (this.f2.hp > this.f1.hp)  { this.p2Wins++; this.roundMsg = FIGHTER_ROSTER[this.p2Sel].name + ' VENCE!'; }
+                else                               { this.roundMsg = 'EMPATE!'; }
+            }
+
+            this.gs            = GS.ROUND_END;
+            this.roundEndTimer = 190;
+        }
+
+        // ============================================================
+        // UPDATE — Ecrã de Seleção
+        // ============================================================
+        updateSelect() {
+            const CD = 12;
+            if (this.selCD1 > 0) this.selCD1--;
+            if (this.selCD2 > 0) this.selCD2--;
+            const n = FIGHTER_ROSTER.length;
+
+            // Cursor P1
+            if (!this.p1OK) {
+                if (this.inp.isDown('KeyA') && this.selCD1 === 0) { this.p1Sel = (this.p1Sel - 1 + n) % n; this.selCD1 = CD; }
+                if (this.inp.isDown('KeyD') && this.selCD1 === 0) { this.p1Sel = (this.p1Sel + 1) % n;     this.selCD1 = CD; }
+                if (this.inp.isDown('KeyW') && this.selCD1 === 0) { this.p1Sel = (this.p1Sel - 3 + n) % n; this.selCD1 = CD; }
+                if (this.inp.isDown('KeyS') && this.selCD1 === 0) { this.p1Sel = (this.p1Sel + 3) % n;     this.selCD1 = CD; }
+                if (this.inp.justDown('KeyF')) this.p1OK = true;
+            }
+
+            // Cursor P2
+            if (!this.p2OK) {
+                if (this.inp.isDown('ArrowLeft')  && this.selCD2 === 0) { this.p2Sel = (this.p2Sel - 1 + n) % n; this.selCD2 = CD; }
+                if (this.inp.isDown('ArrowRight') && this.selCD2 === 0) { this.p2Sel = (this.p2Sel + 1) % n;     this.selCD2 = CD; }
+                if (this.inp.isDown('ArrowUp')    && this.selCD2 === 0) { this.p2Sel = (this.p2Sel - 3 + n) % n; this.selCD2 = CD; }
+                if (this.inp.isDown('ArrowDown')  && this.selCD2 === 0) { this.p2Sel = (this.p2Sel + 3) % n;     this.selCD2 = CD; }
+                if (this.inp.justDown('KeyK')) this.p2OK = true;
+            }
+
+            // Ambos confirmados → iniciar combate
+            if (this.p1OK && this.p2OK) {
+                this.p1OK = this.p2OK = false;
+                this.p1Wins = this.p2Wins = 0;
+                this.startRound();
+            }
+        }
+
+        // ============================================================
+        // UPDATE — Combate
+        // ============================================================
+        updateCombat() {
+            this.roundFrames = Math.max(0, this.roundFrames - 1);
+            this.timerDisplay = Math.ceil(this.roundFrames / FPS);
+
+            const i1 = this.inp.p1();
+            const i2 = this.inp.p2();
+
+            this.f1.update(i1, this.f2);
+            this.f2.update(i2, this.f1);
+
+            this.applyBodyPush();
+            this.checkHit(this.f1, this.f2);
+            this.checkHit(this.f2, this.f1);
+
+            this.updateShake();
+            if (this.wFlash > 0) this.wFlash--;
+
+            this.checkRoundEnd();
+        }
+
+        // ============================================================
+        // UPDATE — Fim de Round
+        // ============================================================
+        updateRoundEnd() {
+            this.roundEndTimer--;
+            if (this.roundEndTimer <= 0) {
+                if (this.p1Wins >= MAX_WINS || this.p2Wins >= MAX_WINS) {
+                    this.gs = GS.GAME_OVER;
+                } else {
+                    this.startRound();
+                }
+            }
+        }
+
+        // ============================================================
+        // UPDATE — Game Over
+        // ============================================================
+        updateGameOver() {
+            if (this.inp.justDown('KeyF') || this.inp.justDown('KeyK') || this.inp.justDown('Enter')) {
+                this.gs = GS.CHAR_SELECT;
+                this.p1OK = this.p2OK = false;
+                this.p1Wins = this.p2Wins = 0;
+            }
+        }
+
+        // ============================================================
+        // UPDATE PRINCIPAL
+        // ============================================================
+        update() {
+            switch (this.gs) {
+                case GS.CHAR_SELECT: this.updateSelect();    break;
+                case GS.COMBAT:      this.updateCombat();    break;
+                case GS.ROUND_END:   this.updateRoundEnd();  break;
+                case GS.GAME_OVER:   this.updateGameOver();  break;
+            }
+            this.inp.tick();
+        }
+
+        // ============================================================
+        // RENDER — Ecrã de Seleção de Personagens
+        // ============================================================
+        renderSelect(ctx) {
+            // Fundo gradiente escuro
+            const bg = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+            bg.addColorStop(0, '#060612');
+            bg.addColorStop(1, '#0A0020');
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+            // Título
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 26px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#FF8800';
+            ctx.shadowBlur = 12;
+            ctx.fillText('ESCOLHE O TEU LUTADOR', CANVAS_W / 2, 42);
+            ctx.shadowBlur = 0;
+
+            // Linha decorativa
+            ctx.strokeStyle = '#FF4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(30, 54); ctx.lineTo(CANVAS_W - 30, 54); ctx.stroke();
+
+            // === Grelha 3×2 ===
+            const cols = 3, rows = 2;
+            const cw = 148, ch = 108;
+            const gx = (CANVAS_W - cols * cw) / 2;
+            const gy = 68;
+
+            FIGHTER_ROSTER.forEach((f, i) => {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                const cx  = gx + col * cw;
+                const cy  = gy + row * ch;
+
+                const isP1 = this.p1Sel === i;
+                const isP2 = this.p2Sel === i;
+
+                // Fundo da célula
+                ctx.fillStyle = '#111128';
+                ctx.fillRect(cx + 3, cy + 3, cw - 6, ch - 6);
+
+                // Borda colorida consoante seleção
+                if (isP1 && isP2) {
+                    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 3;
+                } else if (isP1) {
+                    ctx.strokeStyle = '#4488FF'; ctx.lineWidth = 2;
+                } else if (isP2) {
+                    ctx.strokeStyle = '#FF4444'; ctx.lineWidth = 2;
+                } else {
+                    ctx.strokeStyle = '#333355'; ctx.lineWidth = 1;
+                }
+                ctx.strokeRect(cx + 3, cy + 3, cw - 6, ch - 6);
+
+                // Miniatura (placeholder simplificado)
+                const mh = ch * 0.52, mw = mh * 0.55;
+                const mx = cx + cw / 2 - mw / 2, my = cy + 6;
+                ctx.fillStyle = f.color;
+                ctx.fillRect(mx, my, mw, mh);
+                ctx.fillStyle = f.accent;
+                ctx.fillRect(mx + mw * 0.2, my, mw * 0.6, mh * 0.25);
+
+                // Nome
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 10px "Courier New"';
+                ctx.textAlign = 'center';
+                ctx.fillText(f.name, cx + cw / 2, cy + ch - 22);
+
+                // Especial
+                ctx.fillStyle = '#888888';
+                ctx.font = '8px "Courier New"';
+                ctx.fillText(f.specialMoveName, cx + cw / 2, cy + ch - 10);
+
+                // Labels P1/P2
+                if (isP1) {
+                    ctx.fillStyle = '#4488FF';
+                    ctx.font = 'bold 9px "Courier New"';
+                    ctx.textAlign = 'left';
+                    ctx.fillText('P1', cx + 8, cy + 16);
+                }
+                if (isP2) {
+                    ctx.fillStyle = '#FF4444';
+                    ctx.font = 'bold 9px "Courier New"';
+                    ctx.textAlign = 'right';
+                    ctx.fillText('P2', cx + cw - 8, cy + 16);
+                }
+            });
+
+            // === Painéis de info dos jogadores ===
+            this._drawSelectPanel(ctx, this.p1Sel, 12, 300, false, this.p1OK);
+            this._drawSelectPanel(ctx, this.p2Sel, CANVAS_W - 192, 300, true, this.p2OK);
+
+            // Instruções centrais
+            ctx.fillStyle = '#445566';
+            ctx.font = '9px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText('P1: WASD navegar  |  F confirmar', CANVAS_W / 2, 340);
+            ctx.fillText('P2: Setas navegar  |  K confirmar', CANVAS_W / 2, 355);
+            ctx.fillText('Combate:  F/G/H  e  K/L/;', CANVAS_W / 2, 380);
+        }
+
+        _drawSelectPanel(ctx, sel, x, y, flip, confirmed) {
+            const f = FIGHTER_ROSTER[sel];
+            const pw = 180, ph = 155;
+
+            ctx.fillStyle = flip ? '#2A0808' : '#08082A';
+            ctx.fillRect(x, y, pw, ph);
+            ctx.strokeStyle = flip ? '#FF4444' : '#4488FF';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, pw, ph);
+
+            const label = flip ? 'JOGADOR 2' : 'JOGADOR 1';
+            ctx.fillStyle = flip ? '#FF4444' : '#4488FF';
+            ctx.font = 'bold 11px "Courier New"';
+            ctx.textAlign = flip ? 'right' : 'left';
+            ctx.fillText(label, flip ? x + pw - 8 : x + 8, y + 18);
+
+            ctx.fillStyle = f.color;
+            ctx.font = 'bold 14px "Courier New"';
+            ctx.fillText(f.name, flip ? x + pw - 8 : x + 8, y + 38);
+
+            ctx.fillStyle = '#AAAAAA';
+            ctx.font = '10px "Courier New"';
+            const lines = [
+                `Vida:    ${f.health}`,
+                `Vel:     ${f.speed}`,
+                `Ataque:  ${f.attackPower}`,
+                `Salto:   ${Math.abs(f.jumpHeight).toFixed(1)}`,
+                `Especial: ${f.specialMoveName}`
+            ];
+            lines.forEach((l, i) => ctx.fillText(l, flip ? x + pw - 8 : x + 8, y + 58 + i * 15));
+
+            ctx.fillStyle = confirmed ? '#00FF66' : '#FF4444';
+            ctx.font = 'bold 10px "Courier New"';
+            ctx.fillText(confirmed ? '✓ CONFIRMADO' : (flip ? 'K para confirmar' : 'F para confirmar'),
+                         flip ? x + pw - 8 : x + 8, y + ph - 10);
+        }
+
+        // ============================================================
+        // RENDER — Fundo do Cenário de Combate
+        // ============================================================
+        renderBackground(ctx) {
+            // Céu gradiente escuro (estilo palco NeoGeo)
+            const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+            sky.addColorStop(0, '#0A001A');
+            sky.addColorStop(0.6, '#150030');
+            sky.addColorStop(1, '#200040');
+            ctx.fillStyle = sky;
+            ctx.fillRect(0, 0, CANVAS_W, GROUND_Y);
+
+            // Colunas de fundo (arquitetura estilizada)
+            for (let i = 0; i < 7; i++) {
+                const bx = 40 + i * 90;
+                const grad = ctx.createLinearGradient(bx, 80, bx + 35, GROUND_Y);
+                grad.addColorStop(0, 'rgba(80,30,160,0.18)');
+                grad.addColorStop(1, 'rgba(40,10,80,0.05)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(bx, 80, 35, GROUND_Y - 80);
+                // Destaque da coluna
+                ctx.fillStyle = 'rgba(120,60,220,0.12)';
+                ctx.fillRect(bx, 80, 4, GROUND_Y - 80);
+            }
+
+            // Linhas de perspetiva no horizonte (piso em perspetiva)
+            for (let i = 0; i < 7; i++) {
+                const ly = 200 + i * 26;
+                ctx.strokeStyle = `rgba(100,40,200,${0.08 + i * 0.025})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(CANVAS_W, ly); ctx.stroke();
+            }
+
+            // Chão
+            const floor = ctx.createLinearGradient(0, GROUND_Y, 0, CANVAS_H);
+            floor.addColorStop(0, '#3A1066');
+            floor.addColorStop(0.4, '#1E0840');
+            floor.addColorStop(1, '#050010');
+            ctx.fillStyle = floor;
+            ctx.fillRect(0, GROUND_Y, CANVAS_W, CANVAS_H - GROUND_Y);
+
+            // Linha de brilho do chão (neon glow)
+            ctx.shadowColor = '#AA55FF';
+            ctx.shadowBlur = 10;
+            ctx.strokeStyle = '#CC88FF';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(CANVAS_W, GROUND_Y); ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Reflexo suave
+            ctx.strokeStyle = 'rgba(180,120,255,0.2)';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(0, GROUND_Y + 6); ctx.lineTo(CANVAS_W, GROUND_Y + 6); ctx.stroke();
+        }
+
+        // ============================================================
+        // RENDER — HUD de Combate
+        // ============================================================
+        renderHUD(ctx) {
+            // Nomes
+            ctx.fillStyle = '#77AAFF';
+            ctx.font = 'bold 12px "Courier New"';
+            ctx.textAlign = 'left';
+            ctx.fillText(FIGHTER_ROSTER[this.p1Sel].name, 20, 14);
+
+            ctx.fillStyle = '#FF7777';
+            ctx.textAlign = 'right';
+            ctx.fillText(FIGHTER_ROSTER[this.p2Sel].name, CANVAS_W - 20, 14);
+
+            // Barras de vida
+            this._drawHealthBar(ctx, this.f1, 20, 16, false);
+            this._drawHealthBar(ctx, this.f2, CANVAS_W - 220, 16, true);
+
+            // Indicadores de vitórias (estrelas)
+            for (let i = 0; i < MAX_WINS; i++) {
+                ctx.fillStyle = i < this.p1Wins ? '#FFD700' : '#2A2A2A';
+                ctx.fillRect(20 + i * 20, 40, 14, 8);
+                ctx.fillStyle = i < this.p2Wins ? '#FFD700' : '#2A2A2A';
+                ctx.fillRect(CANVAS_W - 20 - (i + 1) * 20, 40, 14, 8);
+            }
+
+            // Timer central
+            this._drawTimer(ctx);
+        }
+
+        _drawHealthBar(ctx, fighter, x, y, reversed) {
+            const bw = 200, bh = 18;
+            const pct = Math.max(0, fighter.hp / fighter.maxHp);
+
+            // Fundo
+            ctx.fillStyle = '#0A0A0A';
+            ctx.fillRect(x, y, bw, bh);
+
+            // Cor dinâmica (verde → amarelo → vermelho)
+            let bc = pct > 0.6 ? '#44EE22' : pct > 0.3 ? '#FFCC00' : '#FF2200';
+
+            const fw  = bw * pct;
+            const bx  = reversed ? x + bw - fw : x;
+            const g   = ctx.createLinearGradient(bx, y, bx, y + bh);
+            g.addColorStop(0, bc);
+            g.addColorStop(1, this._dim(bc, 60));
+            ctx.fillStyle = g;
+            ctx.fillRect(bx, y, fw, bh);
+
+            // Brilho
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillRect(bx, y, fw, bh / 3);
+
+            // Borda
+            ctx.strokeStyle = '#444';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, bw, bh);
+
+            // Valor numérico
+            ctx.fillStyle = '#EEE';
+            ctx.font = '9px "Courier New"';
+            ctx.textAlign = reversed ? 'right' : 'left';
+            ctx.fillText(`${Math.ceil(fighter.hp)}/${fighter.maxHp}`, reversed ? x + bw : x, y - 2);
+        }
+
+        _drawTimer(ctx) {
+            const cx = CANVAS_W / 2;
+            ctx.fillStyle = '#080818';
+            ctx.fillRect(cx - 32, 8, 64, 38);
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(cx - 32, 8, 64, 38);
+
+            const tc = this.timerDisplay <= 10 ? '#FF4444' : '#FFD700';
+            ctx.fillStyle = tc;
+            ctx.font = 'bold 26px "Courier New"';
+            ctx.textAlign = 'center';
+            if (this.timerDisplay <= 10) {
+                ctx.shadowColor = '#FF0000';
+                ctx.shadowBlur = 8;
+            }
+            ctx.fillText(String(this.timerDisplay).padStart(2, '0'), cx, 38);
+            ctx.shadowBlur = 0;
+        }
+
+        // Escurece uma cor hex
+        _dim(hex, amt) {
+            const n = parseInt(hex.replace('#',''), 16);
+            const r = Math.max(0, (n >> 16) - amt);
+            const g = Math.max(0, ((n >> 8) & 0xFF) - amt);
+            const b = Math.max(0, (n & 0xFF) - amt);
+            return `rgb(${r},${g},${b})`;
+        }
+
+        // ============================================================
+        // RENDER — Combate
+        // ============================================================
+        renderCombat(ctx) {
+            ctx.save();
+            ctx.translate(this.shake.x, this.shake.y);
+
+            this.renderBackground(ctx);
+            this.f1.render(ctx);
+            this.f2.render(ctx);
+            this.renderHUD(ctx);
+
+            ctx.restore();
+
+            // White flash (não sofre shake)
+            if (this.wFlash > 0) {
+                ctx.fillStyle = `rgba(255,255,255,${this.wFlash / 16})`;
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+            }
+        }
+
+        // ============================================================
+        // RENDER — Fim de Round
+        // ============================================================
+        renderRoundEnd(ctx) {
+            this.renderCombat(ctx);
+
+            // Overlay escuro semitransparente
+            ctx.fillStyle = 'rgba(0,0,0,0.52)';
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+            // Mensagem principal
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 44px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#FF3300';
+            ctx.shadowBlur = 18;
+            ctx.fillText(this.roundMsg, CANVAS_W / 2, CANVAS_H / 2 - 18);
+            ctx.shadowBlur = 0;
+
+            // Sub-mensagem
+            const gameOver = this.p1Wins >= MAX_WINS || this.p2Wins >= MAX_WINS;
+            const sub = this.roundEndTimer > 130
+                ? 'K.O.!'
+                : gameOver ? 'GAME OVER' : 'PRÓXIMO ROUND...';
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 20px "Courier New"';
+            ctx.fillText(sub, CANVAS_W / 2, CANVAS_H / 2 + 28);
+        }
+
+        // ============================================================
+        // RENDER — Game Over
+        // ============================================================
+        renderGameOver(ctx) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+            // Título
+            ctx.fillStyle = '#FF3333';
+            ctx.font = 'bold 54px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#FF0000';
+            ctx.shadowBlur = 22;
+            ctx.fillText('GAME OVER', CANVAS_W / 2, 180);
+            ctx.shadowBlur = 0;
+
+            const wP   = this.p1Wins >= MAX_WINS ? 'JOGADOR 1' : 'JOGADOR 2';
+            const wN   = this.p1Wins >= MAX_WINS
+                ? FIGHTER_ROSTER[this.p1Sel].name
+                : FIGHTER_ROSTER[this.p2Sel].name;
+
+            ctx.fillStyle = '#FFD700';
+            ctx.font = 'bold 22px "Courier New"';
+            ctx.fillText(`${wP} VENCE!`, CANVAS_W / 2, 248);
+            ctx.fillStyle = '#FFF';
+            ctx.font = 'bold 18px "Courier New"';
+            ctx.fillText(wN, CANVAS_W / 2, 280);
+
+            ctx.fillStyle = '#888';
+            ctx.font = '14px "Courier New"';
+            ctx.fillText(`${this.p1Wins} — ${this.p2Wins}`, CANVAS_W / 2, 316);
+
+            // Piscar instrução de recomeço
+            if (Math.floor(Date.now() / 520) % 2 === 0) {
+                ctx.fillStyle = '#FFF';
+                ctx.font = '13px "Courier New"';
+                ctx.fillText('Pressiona F ou K para recomeçar', CANVAS_W / 2, 400);
+            }
+        }
+
+        // ============================================================
+        // RENDER PRINCIPAL
+        // ============================================================
+        render() {
+            const ctx = this.ctx;
+            ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+            switch (this.gs) {
+                case GS.CHAR_SELECT: this.renderSelect(ctx);    break;
+                case GS.COMBAT:      this.renderCombat(ctx);    break;
+                case GS.ROUND_END:   this.renderRoundEnd(ctx);  break;
+                case GS.GAME_OVER:   this.renderGameOver(ctx);  break;
+            }
+        }
+
+        // ============================================================
+        // GAME LOOP — Fixed Timestep (60 FPS)
+        // Usa um acumulador para garantir física consistente
+        // independentemente da taxa de refresh do monitor.
+        // ============================================================
+        loop(ts) {
+            const delta = Math.min(ts - this.lastTS, 100); // cap de 100ms anti-freeze
+            this.lastTS = ts;
+            this.accumulator += delta;
+
+            while (this.accumulator >= FRAME_MS) {
+                this.update();
+                this.accumulator -= FRAME_MS;
+            }
+
+            this.render();
+            requestAnimationFrame(t => this.loop(t));
+        }
+
+        start() {
+            requestAnimationFrame(ts => {
+                this.lastTS = ts;
+                this.loop(ts);
+            });
+        }
+    }
+
+    // ================================================================
+    // ARRANQUE DO MOTOR
+    // ================================================================
+    window.addEventListener('load', () => {
+        const canvas = document.getElementById('gameCanvas');
+        const game   = new Game(canvas);
+        game.start();
+
+        console.log('%cRetroFight Engine v1.0', 'color:#FFD700;font-weight:bold;font-size:16px');
+        console.log('Roster:', FIGHTER_ROSTER.map(f => f.name).join(' | '));
+        console.log('Controlos P1: WASD + F/G/H');
+        console.log('Controlos P2: Setas + K/L/;');
+    });
+
+    // Bloquear scroll nas teclas de jogo
+    window.addEventListener('keydown', e => {
+        const blocked = ['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
+        if (blocked.includes(e.code)) e.preventDefault();
+    }, { passive: false });
+
+    </script>
+</body>
+</html>
