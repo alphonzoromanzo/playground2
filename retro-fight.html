@@ -6,13 +6,13 @@
   <title>The Rainmaker</title>
   <style>
     :root {
-      --iran-green: #239f40;
-      --iran-white: #f7f7f7;
-      --iran-red: #da0000;
-      --bg: #101510;
-      --panel: #1a1f1b;
-      --text: #f1f1f1;
-      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      --cw-deep: #0b132b;
+      --cw-mid: #1c2541;
+      --cw-accent: #3a86ff;
+      --cw-bright: #5bc0eb;
+      --cw-highlight: #f4d35e;
+      --cw-ink: #e0fbfc;
+      --shadow: 0 0 0 3px #0b132b, 0 0 0 6px #3a86ff;
     }
 
     * { box-sizing: border-box; }
@@ -20,185 +20,160 @@
     body {
       margin: 0;
       min-height: 100vh;
-      font-family: "Segoe UI", Roboto, Arial, sans-serif;
-      color: var(--text);
+      font-family: "Press Start 2P", "Courier New", monospace;
+      color: var(--cw-ink);
       background:
-        linear-gradient(180deg, rgba(35, 159, 64, 0.25), rgba(16, 21, 16, 0.95) 30%),
-        linear-gradient(180deg, #0f140f, #0a0c0a);
+        radial-gradient(circle at 15% 10%, rgba(91, 192, 235, 0.22), transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(58, 134, 255, 0.24), transparent 35%),
+        linear-gradient(180deg, var(--cw-mid), var(--cw-deep));
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overscroll-behavior: contain;
+      touch-action: manipulation;
+      padding: clamp(8px, 2vw, 18px);
+      gap: 10px;
+    }
+
+    .topbar {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px;
+      background: rgba(11, 19, 43, 0.75);
+      border: 3px solid var(--cw-bright);
+      box-shadow: var(--shadow);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-size: clamp(0.72rem, 2vw, 1rem);
+    }
+
+    .counter { color: var(--cw-highlight); }
+
+    .game-shell {
+      min-height: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 16px;
-      overscroll-behavior: contain;
-      touch-action: manipulation;
     }
 
-    .shell {
-      width: min(100%, 980px);
-      border-radius: 18px;
-      box-shadow: var(--shadow);
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0,0,0,0.2));
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      overflow: hidden;
-    }
-
-    header {
-      padding: 14px 18px;
+    .stack {
+      width: min(100%, 480px);
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: space-between;
-      background: linear-gradient(90deg, var(--iran-green), var(--iran-white), var(--iran-red));
-      color: #111;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-    }
-
-    .content {
-      display: grid;
-      grid-template-columns: 1fr 260px;
-      gap: 16px;
-      padding: 16px;
+      gap: 8px;
     }
 
     .board-wrap {
+      width: 100%;
       display: flex;
       justify-content: center;
-      align-items: center;
-      background: rgba(255, 255, 255, 0.03);
-      border-radius: 14px;
-      padding: 12px;
+      padding: 8px;
+      background: rgba(28, 37, 65, 0.85);
+      border: 3px solid var(--cw-accent);
+      box-shadow: var(--shadow);
     }
 
     canvas {
-      width: min(100%, 420px);
+      width: min(92vw, calc((100vh - 240px) / 2));
+      max-width: 380px;
+      min-width: 220px;
+      aspect-ratio: 1 / 2;
       height: auto;
-      border-radius: 10px;
-      background: #0f150f;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35);
+      border: 3px solid var(--cw-bright);
+      background: #060c1f;
       image-rendering: pixelated;
     }
 
-    .side {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .card {
-      background: var(--panel);
-      border: 1px solid rgba(255, 255, 255, 0.09);
-      border-radius: 12px;
-      padding: 12px;
-    }
-
-    .card h2 {
-      margin: 0 0 8px;
-      font-size: 1rem;
-    }
-
-    .stats p {
-      margin: 6px 0;
-      font-size: 0.95rem;
-    }
-
     .btn-row {
+      width: 100%;
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 8px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
     }
 
     button {
-      border: none;
-      border-radius: 10px;
-      padding: 10px;
-      font-size: 0.95rem;
-      font-weight: 700;
-      color: #111;
+      border: 2px solid #000;
+      border-radius: 0;
+      padding: 10px 6px;
+      font-family: inherit;
+      font-size: clamp(0.62rem, 1.8vw, 0.78rem);
+      color: #fff;
       cursor: pointer;
-      transition: transform 0.08s ease, filter 0.2s ease;
+      text-transform: uppercase;
+      background: var(--cw-accent);
+      box-shadow: 0 4px 0 #14213d;
     }
 
-    button:active { transform: scale(0.97); }
-    .start { background: var(--iran-green); }
-    .pause { background: var(--iran-white); }
-    .reset { background: var(--iran-red); color: #fff; }
+    button:active {
+      transform: translateY(2px);
+      box-shadow: 0 2px 0 #14213d;
+    }
+
+    .start { background: #3a86ff; }
+    .pause { background: #5bc0eb; color: #081021; }
+    .reset { background: #f4d35e; color: #121212; }
 
     .touch {
+      width: 100%;
       display: none;
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    .touch button {
-      background: #ececec;
-      min-height: 48px;
-      color: #111;
-      font-size: 1.1rem;
+      margin-top: 2px;
     }
 
     .touch-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 6px;
     }
 
     .touch .drop {
       grid-column: span 3;
-      background: var(--iran-red);
-      color: white;
+      background: #1c2541;
+      color: var(--cw-highlight);
     }
 
     .legend {
-      font-size: 0.85rem;
-      line-height: 1.4;
-      opacity: 0.9;
+      margin: 2px 0 0;
+      text-align: center;
+      opacity: 0.85;
+      font-size: clamp(0.55rem, 1.6vw, 0.65rem);
+      line-height: 1.35;
     }
 
     @media (max-width: 860px) {
-      .content { grid-template-columns: 1fr; }
       .touch { display: block; }
     }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header>
-      <span>🎵🪙 THE RAINMAKER</span>
-      <span>Tetris de Notas & Moedas</span>
-    </header>
-    <section class="content">
+  <header class="topbar">
+    <span>Score: <strong class="counter" id="score">0</strong></span>
+  </header>
+
+  <main class="game-shell">
+    <section class="stack">
       <div class="board-wrap">
         <canvas id="game" width="300" height="600" aria-label="Tabuleiro The Rainmaker"></canvas>
       </div>
-      <aside class="side">
-        <div class="card stats">
-          <h2>Pontuação</h2>
-          <p>Score: <strong id="score">0</strong></p>
-          <p>Linhas: <strong id="lines">0</strong></p>
-          <p>Nível: <strong id="level">1</strong></p>
-          <p>Moedas: <strong id="coins">0</strong></p>
-          <p>Notas: <strong id="notes">0</strong></p>
+
+      <div class="btn-row">
+        <button class="start" id="startBtn">Iniciar</button>
+        <button class="pause" id="pauseBtn">Pausar</button>
+        <button class="reset" id="resetBtn">Reiniciar</button>
+      </div>
+
+      <p class="legend">Teclado: ⬅️➡️ mover, ⬆️ rodar, ⬇️ descer, Espaço queda rápida.</p>
+
+      <div class="touch" aria-label="Botões touch">
+        <div class="touch-grid">
+          <button data-action="left">⬅️</button>
+          <button data-action="rotate">⤾</button>
+          <button data-action="right">➡️</button>
+          <button data-action="down">⬇️</button>
+          <button class="drop" data-action="drop">QUEDA</button>
         </div>
-        <div class="card">
-          <h2>Controlo</h2>
-          <div class="btn-row">
-            <button class="start" id="startBtn">Iniciar</button>
-            <button class="pause" id="pauseBtn">Pausar</button>
-            <button class="reset" id="resetBtn">Reiniciar</button>
-          </div>
-          <p class="legend">Teclado: ⬅️➡️ mover, ⬆️ rodar, ⬇️ descer, Espaço queda rápida.</p>
-          <div class="touch" aria-label="Botões touch">
-            <div class="touch-grid">
-              <button data-action="left">⬅️</button>
-              <button data-action="rotate">⤾</button>
-              <button data-action="right">➡️</button>
-              <button data-action="down">⬇️</button>
-              <button class="drop" data-action="drop">QUEDA</button>
-            </div>
-          </div>
-        </div>
-      </aside>
+      </div>
     </section>
   </main>
 
@@ -206,16 +181,12 @@
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
-    const linesEl = document.getElementById('lines');
-    const levelEl = document.getElementById('level');
-    const coinsEl = document.getElementById('coins');
-    const notesEl = document.getElementById('notes');
 
     const COLS = 10;
     const ROWS = 20;
     const BLOCK = 30;
 
-    const COLORS = ['#239f40', '#f7f7f7', '#da0000', '#68d485', '#ff6b6b', '#f4f4f4', '#52aa6d'];
+    const COLORS = ['#3a86ff', '#5bc0eb', '#f4d35e', '#7bdff2', '#8ecae6', '#ffd166', '#4ea8de'];
     const EMOJIS = ['💵', '🪙'];
 
     const SHAPES = [
@@ -351,8 +322,8 @@
     function overlay(text) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 24px Segoe UI';
+      ctx.fillStyle = '#e0fbfc';
+      ctx.font = 'bold 20px Courier New';
       ctx.textAlign = 'center';
       ctx.fillText(text, canvas.width / 2, canvas.height / 2);
     }
@@ -360,16 +331,16 @@
     function drawBlock(x, y, color) {
       ctx.fillStyle = color;
       ctx.fillRect(x * BLOCK, y * BLOCK, BLOCK, BLOCK);
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.strokeStyle = 'rgba(3, 8, 24, 0.55)';
       ctx.strokeRect(x * BLOCK + 0.5, y * BLOCK + 0.5, BLOCK - 1, BLOCK - 1);
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.font = '16px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(EMOJIS[(x + y) % EMOJIS.length], x * BLOCK + BLOCK / 2, y * BLOCK + BLOCK * 0.64);
     }
 
     function draw() {
-      ctx.fillStyle = '#0f150f';
+      ctx.fillStyle = '#060c1f';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       for (let y = 0; y < ROWS; y++) {
@@ -389,10 +360,6 @@
 
     function updateHud() {
       scoreEl.textContent = score;
-      linesEl.textContent = lines;
-      levelEl.textContent = level;
-      coinsEl.textContent = coins;
-      notesEl.textContent = notes;
     }
 
     function speed() {
