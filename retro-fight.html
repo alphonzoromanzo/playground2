@@ -6,13 +6,14 @@
   <title>The Rainmaker</title>
   <style>
     :root {
-      --cw-deep: #0b132b;
-      --cw-mid: #1c2541;
+      --cw-deep: #050914;
+      --cw-mid: #0d1630;
+      --cw-panel: rgba(16, 28, 56, 0.88);
       --cw-accent: #3a86ff;
-      --cw-bright: #5bc0eb;
-      --cw-highlight: #f4d35e;
-      --cw-ink: #e0fbfc;
-      --shadow: 0 0 0 3px #0b132b, 0 0 0 6px #3a86ff;
+      --cw-bright: #50d5ff;
+      --cw-highlight: #ffe072;
+      --cw-ink: #eff8ff;
+      --shadow: 0 0 0 1px rgba(80, 213, 255, 0.45), 0 0 25px rgba(58, 134, 255, 0.35);
     }
 
     * { box-sizing: border-box; }
@@ -23,15 +24,15 @@
       font-family: "Press Start 2P", "Courier New", monospace;
       color: var(--cw-ink);
       background:
-        radial-gradient(circle at 15% 10%, rgba(91, 192, 235, 0.22), transparent 40%),
-        radial-gradient(circle at 85% 85%, rgba(58, 134, 255, 0.24), transparent 35%),
-        linear-gradient(180deg, var(--cw-mid), var(--cw-deep));
+        radial-gradient(circle at 14% 10%, rgba(80, 213, 255, 0.26), transparent 40%),
+        radial-gradient(circle at 86% 80%, rgba(76, 124, 255, 0.24), transparent 38%),
+        linear-gradient(180deg, #131a2f 0%, var(--cw-mid) 35%, var(--cw-deep) 100%);
       display: grid;
       grid-template-rows: auto 1fr;
       overscroll-behavior: contain;
       touch-action: manipulation;
-      padding: clamp(8px, 2vw, 18px);
-      gap: 10px;
+      padding: clamp(6px, 1.6vw, 14px);
+      gap: 8px;
     }
 
     .topbar {
@@ -39,9 +40,9 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      padding: 10px;
-      background: rgba(11, 19, 43, 0.75);
-      border: 3px solid var(--cw-bright);
+      padding: 8px;
+      background: linear-gradient(135deg, rgba(16, 33, 66, 0.8), rgba(9, 18, 37, 0.9));
+      border: 1px solid rgba(80, 213, 255, 0.6);
       box-shadow: var(--shadow);
       text-transform: uppercase;
       letter-spacing: 1px;
@@ -62,58 +63,61 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
     }
 
     .board-wrap {
-      width: 100%;
+      width: min(100%, 440px);
       display: flex;
       justify-content: center;
-      padding: 8px;
-      background: rgba(28, 37, 65, 0.85);
-      border: 3px solid var(--cw-accent);
+      padding: 7px;
+      background: var(--cw-panel);
+      border: 1px solid rgba(58, 134, 255, 0.65);
+      border-radius: 14px;
       box-shadow: var(--shadow);
     }
 
     canvas {
-      width: min(92vw, calc((100vh - 240px) / 2));
-      max-width: 380px;
-      min-width: 220px;
+      width: min(90vw, 360px, calc((100vh - 245px) / 2));
+      max-width: 360px;
+      min-width: min(220px, 74vw);
       aspect-ratio: 1 / 2;
       height: auto;
-      border: 3px solid var(--cw-bright);
+      border: 2px solid var(--cw-bright);
+      border-radius: 10px;
       background: #060c1f;
       image-rendering: pixelated;
+      box-shadow: inset 0 0 18px rgba(80, 213, 255, 0.18);
     }
 
     .btn-row {
-      width: 100%;
+      width: min(100%, 440px);
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 6px;
     }
 
     button {
-      border: 2px solid #000;
-      border-radius: 0;
-      padding: 10px 6px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      padding: 9px 6px;
       font-family: inherit;
-      font-size: clamp(0.62rem, 1.8vw, 0.78rem);
+      font-size: clamp(0.56rem, 1.5vw, 0.74rem);
       color: #fff;
       cursor: pointer;
       text-transform: uppercase;
-      background: var(--cw-accent);
-      box-shadow: 0 4px 0 #14213d;
+      letter-spacing: 0.6px;
+      background: linear-gradient(145deg, #3b5fff, #2954d9);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15), 0 6px 16px rgba(5, 9, 20, 0.55);
     }
 
     button:active {
-      transform: translateY(2px);
-      box-shadow: 0 2px 0 #14213d;
+      transform: translateY(1px) scale(0.99);
     }
 
-    .start { background: #3a86ff; }
-    .pause { background: #5bc0eb; color: #081021; }
-    .reset { background: #f4d35e; color: #121212; }
+    .start { background: linear-gradient(135deg, #4f86ff, #2d6bff); }
+    .pause { background: linear-gradient(135deg, #43d6ff, #34a6d3); color: #04101e; }
+    .reset { background: linear-gradient(135deg, #ffe072, #ffc857); color: #251800; }
 
     .touch {
       width: 100%;
@@ -134,15 +138,51 @@
     }
 
     .legend {
-      margin: 2px 0 0;
+      margin: 1px 0 0;
       text-align: center;
-      opacity: 0.85;
-      font-size: clamp(0.55rem, 1.6vw, 0.65rem);
+      opacity: 0.72;
+      font-size: clamp(0.5rem, 1.4vw, 0.62rem);
       line-height: 1.35;
     }
 
     @media (max-width: 860px) {
       .touch { display: block; }
+    }
+
+    @media (max-height: 820px) {
+      body {
+        padding: 5px;
+        gap: 6px;
+      }
+
+      .topbar {
+        padding: 6px;
+        font-size: clamp(0.62rem, 1.8vw, 0.8rem);
+      }
+
+      canvas {
+        width: min(88vw, calc((100vh - 215px) / 2));
+      }
+
+      button {
+        padding: 8px 5px;
+      }
+
+      .legend {
+        display: none;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .btn-row,
+      .touch-grid {
+        gap: 5px;
+      }
+
+      button {
+        font-size: 0.54rem;
+        padding: 8px 4px;
+      }
     }
   </style>
 </head>
